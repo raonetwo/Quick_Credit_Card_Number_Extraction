@@ -21,27 +21,22 @@
     <input type="file" id="infile" onchange="handleFiles(this.files)">
     <button id="extract">Extract the CC number</button>
     <div id = "extractionResult"> </div>
-
     <!-- Get Tesseract -->
     <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
-
     <!-- Get OpenCV -->
     <script type="text/javascript" src="https://docs.opencv.org/master/opencv.js"></script>
-
     <!-- Data Extraction code -->
     <script type="text/javascript">
         //Canvas creating with image
         var canvas = document.getElementById("c");
         var ctx = canvas.getContext('2d');
         var img = new Image();
-
         //Handle files to capture image src
         function handleFiles(files) {
             if (files.length) {
                 img.src = window.URL.createObjectURL(files[0]);
             }
         }
-
         //Image with EventListener
         img.addEventListener('load', function() {
             ctx.filter = 'none';
@@ -51,7 +46,6 @@
             window.URL.revokeObjectURL(this.src);
         }, false);
 
-        // Make image of standard size
         function normalize(img) {
             let dst = new cv.Mat();
             let target = 300;
@@ -60,7 +54,6 @@
             cv.resize(img, dst, dsize, 0, 0, cv.INTER_AREA);
             return dst;
         }
-
         //Grayscale filter
         function convertImageToGray(img) {
             let dst = new cv.Mat();
@@ -74,13 +67,12 @@
             // cv.adaptiveThreshold(imgMat, dst, 200, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 3, 0);
             return dst;
         }
-        // Threshold to increase contrast
+        // B
         function binarizeTruncate(imgMat) {
             let dst = new cv.Mat();
             cv.threshold(imgMat, dst, 177, 200, cv.THRESH_TRUNC);
             return dst;
         }
-
         // Tophat morph operation
         function tophat(imgMat) {
             let dst = new cv.Mat();
@@ -88,7 +80,6 @@
             cv.morphologyEx(imgMat, dst, cv.MORPH_TOPHAT, rectKernel);
             return dst;
         }
-
         // morph close operation
         function morphClose(imgMat) {
             let dst = new cv.Mat();
@@ -96,7 +87,6 @@
             cv.morphologyEx(imgMat, dst, cv.MORPH_CLOSE, rectKernel);
             return dst;
         }
-
         // morph elliptical close operation with strong x axis closure
         function morphCloseElliptical(imgMat) {
             let dst = new cv.Mat();
@@ -104,16 +94,34 @@
             cv.morphologyEx(imgMat, dst, cv.MORPH_CLOSE, rectKernel);
             return dst;
         }
-
-        // Get contours in an image
+        // sobel filter for edges
+        // function imageGradient(imgMat) {
+        // 	let dst = new cv.Mat();
+        //     // cv.Scharr(dst, dst, cv.CV_8U, 1, 0, 1, 0, cv.BORDER_DEFAULT);
+        //     cv.Sobel(dst, dst, cv.CV_8U, 1, 0, 3, 1, 0, cv.BORDER_DEFAULT);
+        //     // cv.Sobel(dst, dst, cv.CV_32F, 1, 0, 3, 1, 0, cv.BORDER_DEFAULT);
+        //     return dst;
+        // }
+        // get contours from edges in the image
         function grabContours(imgMat) {
             let contours = new cv.MatVector();
             let hierarchy = new cv.Mat();
             cv.findContours(imgMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
             return contours;
         }
+        // draw contours from edges in the image
+        function drawContours(imgMat) {
+            let contours = new cv.MatVector();
+            let hierarchy = new cv.Mat();
+            cv.findContours(imgMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+            let dst = cv.Mat.zeros(imgMat.rows, imgMat.cols, cv.CV_8UC3);
+            for (let i = 0; i < contours.size(); ++i) {
+                let color = new cv.Scalar(Math.round(Math.random() * 255), Math.round(Math.random() * 255), Math.round(Math.random() * 255));
+                cv.drawContours(dst, contours, i, color, 1, cv.LINE_8, hierarchy, 100);
+            }
+            return dst;
+        }
 
-        // Create bounding rects over the contours
         function findBoundingBoxes(contours) {
             let boundingBoxes = [];
             for (var i = 0; i < contours.size(); i++) {
@@ -123,7 +131,23 @@
             return boundingBoxes;
         }
 
-        // Get bounding box of credit card number from a list of bounding boxes, pure heuristics.
+        function drawBoundingBoxes(imgMat, boundingBoxes) {
+            let dst = imgMat;
+            let rectangleColor = new cv.Scalar(255, 0, 0);
+            for (var i = 0; i < boundingBoxes.length; i++) {
+                let rect = boundingBoxes[i];
+                let boundingBoxRelativeSize = imgMat.rows / rect.height;
+                let boundingBoxAspectRatio = rect.width / rect.height
+                if (boundingBoxRelativeSize > 10 && boundingBoxRelativeSize < 15 && boundingBoxAspectRatio > 12) {
+                    console.log("x: " + rect.x + " y: " + rect.y + " rect width: " + rect.width + " rect height: " + rect.height + " ar: " + rect.width / rect.height);
+                    let point1 = new cv.Point(rect.x, rect.y);
+                    let point2 = new cv.Point(rect.x + rect.width, rect.y + rect.height);
+                    cv.rectangle(dst, point1, point2, rectangleColor, 2, cv.LINE_AA, 0);
+                }
+            }
+            return dst;
+        }
+
         function getNumberBoundingBox(imgMat, boundingBoxes) {
             for (var i = 0; i < boundingBoxes.length; i++) {
                 let rect = boundingBoxes[i];
@@ -136,7 +160,6 @@
             return new cv.Rect(0, 0, imgMat.width, imgMat.height);
         }
 
-        // get bounding box for credit card from a list of bounding bozes, pure heuristics.
         function getCardBoundingBox(imgMat, boundingBoxes) {
             let dst = imgMat;
             let rectangleColor = new cv.Scalar(255, 0, 0);
@@ -150,21 +173,20 @@
                 }
             }
             return biggestRect;
+            // let point1 = new cv.Point(biggestRect.x, biggestRect.y);
+            // let point2 = new cv.Point(biggestRect.x + biggestRect.width, biggestRect.y + biggestRect.height);
+            // cv.rectangle(dst, point1, point2, rectangleColor, 5, cv.LINE_AA, 0);
+            // return dst;
         }
 
-        // Canny edge detection
         function detectEdge(imgMat) {
             let dst = new cv.Mat();
             cv.Canny(imgMat, dst, 50, 100, 3, false);
             return dst;
         }
-
-        // Listen for extraction request
         var extract = document.getElementById('extract');
         extract.addEventListener('click', function() {
-        	// read image to matrix
             let src = cv.imread(img);
-
             // detect credit card
             // need a more robust algo for card (and rectangle) detection
             let edges = detectEdge(convertImageToGray(src));
@@ -174,7 +196,6 @@
             let guessedCard = src.roi(getCardBoundingBox(src, edgeBoundingBoxes));
             let normalized = normalize(guessedCard)
             let gray = convertImageToGray(normalized);
-
             //  detect cc number location
             //  need some tuning, can look into template matching approach
             //  ml may be the way to go forward here. 
@@ -182,13 +203,13 @@
             let close1 = morphClose(tophatted)
             let binarized = binarize(close1);
             let close2 = morphClose(binarized);
-
             // to merge bounding boxes
             let close3 = morphCloseElliptical(close2);
+            // let dst = drawContours(close3);
             let contours = grabContours(close3);
             let boundingBoxes = findBoundingBoxes(contours);
+            // let dst = drawBoundingBoxes(normalized, boundingBoxes);
             let numberBoundingBox = getNumberBoundingBox(normalized, boundingBoxes);
-
             // Can be tuned further for better ocr result
             let dst = binarizeTruncate(gray).roi(numberBoundingBox);
             cv.imshow('c', dst);
@@ -211,9 +232,18 @@
                 
                 var extractionResult = document.getElementById("extractionResult");
                 extractionResult.innerHTML = "OCR RESULT: " + "<br>" + text;
+
                 await worker.terminate();
             })();
         }, false);
+        //Download button
+        var download = document.createElement('a');
+        download.innerHTML = 'Download the image';
+        download.addEventListener('click', function(ev) {
+            download.href = canvas.toDataURL();
+            download.download = 'img.png';
+        }, false);
+        document.body.appendChild(download);
 
     </script>
 </body>
