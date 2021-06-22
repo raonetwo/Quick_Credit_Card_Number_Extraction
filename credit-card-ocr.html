@@ -1,0 +1,219 @@
+<style type="text/css">
+    #c {
+        border: 1px solid;
+    }
+
+    a {
+        display: block;
+        max-width: 290px;
+        text-align: center;
+        border: 1px solid #999;
+        border-radius: .2em;
+        padding: .1em .3em;
+        text-decoration: none;
+        background-color: #eee;
+    }
+
+</style>
+
+<body>
+    <canvas id="c">Here's the canvas.</canvas>
+    <input type="file" id="infile" onchange="handleFiles(this.files)">
+    <button id="extract">Extract the CC number</button>
+    <div id = "extractionResult"> </div>
+
+    <!-- Get Tesseract -->
+    <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
+
+    <!-- Get OpenCV -->
+    <script type="text/javascript" src="https://docs.opencv.org/master/opencv.js"></script>
+
+    <!-- Data Extraction code -->
+    <script type="text/javascript">
+        //Canvas creating with image
+        var canvas = document.getElementById("c");
+        var ctx = canvas.getContext('2d');
+        var img = new Image();
+
+        //Handle files to capture image src
+        function handleFiles(files) {
+            if (files.length) {
+                img.src = window.URL.createObjectURL(files[0]);
+            }
+        }
+
+        //Image with EventListener
+        img.addEventListener('load', function() {
+            ctx.filter = 'none';
+            ctx.canvas.width = img.width;
+            ctx.canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            window.URL.revokeObjectURL(this.src);
+        }, false);
+
+        // Make image of standard size
+        function normalize(img) {
+            let dst = new cv.Mat();
+            let target = 300;
+            let scale = target / img.cols;
+            let dsize = new cv.Size(target, Math.round(img.rows * scale));
+            cv.resize(img, dst, dsize, 0, 0, cv.INTER_AREA);
+            return dst;
+        }
+
+        //Grayscale filter
+        function convertImageToGray(img) {
+            let dst = new cv.Mat();
+            cv.cvtColor(img, dst, cv.COLOR_RGBA2GRAY, 0);
+            return dst;
+        }
+        // Convert to pure black and white
+        function binarize(imgMat) {
+            let dst = new cv.Mat();
+            cv.threshold(imgMat, dst, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+            // cv.adaptiveThreshold(imgMat, dst, 200, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 3, 0);
+            return dst;
+        }
+        // Threshold to increase contrast
+        function binarizeTruncate(imgMat) {
+            let dst = new cv.Mat();
+            cv.threshold(imgMat, dst, 177, 200, cv.THRESH_TRUNC);
+            return dst;
+        }
+
+        // Tophat morph operation
+        function tophat(imgMat) {
+            let dst = new cv.Mat();
+            let rectKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 3));
+            cv.morphologyEx(imgMat, dst, cv.MORPH_TOPHAT, rectKernel);
+            return dst;
+        }
+
+        // morph close operation
+        function morphClose(imgMat) {
+            let dst = new cv.Mat();
+            let rectKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 3));
+            cv.morphologyEx(imgMat, dst, cv.MORPH_CLOSE, rectKernel);
+            return dst;
+        }
+
+        // morph elliptical close operation with strong x axis closure
+        function morphCloseElliptical(imgMat) {
+            let dst = new cv.Mat();
+            let rectKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(25, 5));
+            cv.morphologyEx(imgMat, dst, cv.MORPH_CLOSE, rectKernel);
+            return dst;
+        }
+
+        // Get contours in an image
+        function grabContours(imgMat) {
+            let contours = new cv.MatVector();
+            let hierarchy = new cv.Mat();
+            cv.findContours(imgMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+            return contours;
+        }
+
+        // Create bounding rects over the contours
+        function findBoundingBoxes(contours) {
+            let boundingBoxes = [];
+            for (var i = 0; i < contours.size(); i++) {
+                let rect = cv.boundingRect(contours.get(i));
+                boundingBoxes.push(rect);
+            }
+            return boundingBoxes;
+        }
+
+        // Get bounding box of credit card number from a list of bounding boxes, pure heuristics.
+        function getNumberBoundingBox(imgMat, boundingBoxes) {
+            for (var i = 0; i < boundingBoxes.length; i++) {
+                let rect = boundingBoxes[i];
+                let boundingBoxRelativeSize = imgMat.rows / rect.height;
+                let boundingBoxAspectRatio = rect.width / rect.height
+                if (boundingBoxRelativeSize > 10 && boundingBoxRelativeSize < 15 && boundingBoxAspectRatio > 12) {
+                    return new cv.Rect(rect.x - 5, rect.y - 5, rect.width + 10, rect.height + 10);
+                }
+            }
+            return new cv.Rect(0, 0, imgMat.width, imgMat.height);
+        }
+
+        // get bounding box for credit card from a list of bounding bozes, pure heuristics.
+        function getCardBoundingBox(imgMat, boundingBoxes) {
+            let dst = imgMat;
+            let rectangleColor = new cv.Scalar(255, 0, 0);
+            let maxWidth = 0;
+            let biggestRect = new cv.Rect(0, 0, imgMat.width, imgMat.height);;
+            for (var i = 0; i < boundingBoxes.length; i++) {
+                let rect = boundingBoxes[i];
+                if (rect.width > maxWidth && rect.width / rect.height > 1.5 && rect.width / rect.height < 1.7) {
+                    biggestRect = rect;
+                    maxWidth = rect.width;
+                }
+            }
+            return biggestRect;
+        }
+
+        // Canny edge detection
+        function detectEdge(imgMat) {
+            let dst = new cv.Mat();
+            cv.Canny(imgMat, dst, 50, 100, 3, false);
+            return dst;
+        }
+
+        // Listen for extraction request
+        var extract = document.getElementById('extract');
+        extract.addEventListener('click', function() {
+        	// read image to matrix
+            let src = cv.imread(img);
+
+            // detect credit card
+            // need a more robust algo for card (and rectangle) detection
+            let edges = detectEdge(convertImageToGray(src));
+            let edgesClose = morphClose(edges);
+            let edgeContour = grabContours(edgesClose);
+            let edgeBoundingBoxes = findBoundingBoxes(edgeContour);
+            let guessedCard = src.roi(getCardBoundingBox(src, edgeBoundingBoxes));
+            let normalized = normalize(guessedCard)
+            let gray = convertImageToGray(normalized);
+
+            //  detect cc number location
+            //  need some tuning, can look into template matching approach
+            //  ml may be the way to go forward here. 
+            let tophatted = tophat(gray);
+            let close1 = morphClose(tophatted)
+            let binarized = binarize(close1);
+            let close2 = morphClose(binarized);
+
+            // to merge bounding boxes
+            let close3 = morphCloseElliptical(close2);
+            let contours = grabContours(close3);
+            let boundingBoxes = findBoundingBoxes(contours);
+            let numberBoundingBox = getNumberBoundingBox(normalized, boundingBoxes);
+
+            // Can be tuned further for better ocr result
+            let dst = binarizeTruncate(gray).roi(numberBoundingBox);
+            cv.imshow('c', dst);
+
+            // OCR using tesseract
+            // Can be tuned for better accuracy
+            const worker = Tesseract.createWorker();
+            (async () => {
+                await worker.load();
+                await worker.loadLanguage('eng');
+                await worker.initialize('eng');
+                await worker.setParameters({
+                    tessedit_char_whitelist: '0123456789',
+                });
+                const {
+                    data: {
+                        text
+                    }
+                } = await worker.recognize(canvas.toDataURL());
+                
+                var extractionResult = document.getElementById("extractionResult");
+                extractionResult.innerHTML = "OCR RESULT: " + "<br>" + text;
+                await worker.terminate();
+            })();
+        }, false);
+
+    </script>
+</body>
